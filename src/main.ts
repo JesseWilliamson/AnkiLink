@@ -1,11 +1,17 @@
-import { Notice, Plugin } from "obsidian";
+import { Notice, Plugin, TFile, Vault } from "obsidian";
 import {
 	DEFAULT_SETTINGS,
 	AnkiLinkSettings,
 	AnkiLinkSettingsTab,
 } from "./settings";
-import { TARGET_DECK, sendAddNoteRequest, buildNote, sendCreateDeckRequest, sendDeckNamesRequest, ConnNoteFields, ConnNote } from "./ankiConnectUtil";
-import { FLASHCARD_PATTERN, splitCalloutBody } from "./regexUtil";
+import { TARGET_DECK, sendAddNoteRequest, buildNote, sendCreateDeckRequest, sendDeckNamesRequest, Note, sendFindNoteRequest } from "./ankiConnectUtil";
+import { FC_PREAMBLE_P } from "./regexUtil";
+
+interface ParsedNoteData {
+	id: number | undefined,
+	index: number,
+	note: Note
+}
 
 export default class AnkiLink extends Plugin {
 	settings!: AnkiLinkSettings;
@@ -65,33 +71,79 @@ export default class AnkiLink extends Plugin {
 			const createDeckRes = await sendCreateDeckRequest(TARGET_DECK);
 			if (createDeckRes.error) throw new Error(`AnkiConnect: ${createDeckRes.error}`)
 		}
+		let totalAdded = 0;
 		for (const file of markdownFiles) {
-			const s = await vault.read(file);
-			const match = FLASHCARD_PATTERN.exec(s);
-			if (!match || match.length < 3) {
+			const lines = await this.readFile(vault, file);
+			let linesModified = false;
+			const noteDataList = this.parseDocument(lines);
+			for (const noteData of noteDataList) {
+				if (noteData.id == undefined) {
+					noteData.id = await this.sendNote(noteData.note);
+					lines[noteData.index] = `> [!flashcard] %%{noteId}%% ${noteData.note.fields.Front}`;
+					linesModified = true;
+					totalAdded += 1;
+				} else {
+					//TODO: Check if the note has changed and update it.
+				}
+			}
+			if (linesModified) {
+				await vault.modify(file, lines.join("\n"));
+			}
+		}
+		return totalAdded;
+	}
+
+	private async readFile(vault: Vault, file: TFile): Promise<string[]> {
+		return (await vault.read(file)).split("\n");
+	}
+
+	private parseDocument(lines: string[]): ParsedNoteData[] {
+		const output = new Array<ParsedNoteData>();
+		let i = 0;
+		while (i < lines.length) {
+			i++;
+			const { id, title } = this.parsePreamble(lines[i]!) || {};
+			if (!title) {
 				continue;
 			}
-			const title = match[1]!;
-			const rawBody = match[2]!;
-			const splitBody = splitCalloutBody(rawBody);
-			const card = buildNote(title, splitBody)
-			const index = await this.sendNote(card);
-			console.log(title.length);
-			const endIndex = match.index + title.length + 13;
-			const indexedFileContent = this.spliceString(s, endIndex, index.toString());
-			await vault.modify(file, indexedFileContent);
+
+			const bodyLines = this.parseBody(lines.slice(i, -1));
+			const body = bodyLines.join("<br>");
+			const note = buildNote(title, body);
+			output.push({ id: id ? Number(id) : undefined, index: i, note })
+			i += bodyLines.length;
 		}
-		return 0;
+		return output;
 	}
 
-	private spliceString(base: string, index: number, item: string): string {
-		const s1 = base.slice(0, index);
-		const s2 = base.slice(index, - 1)
-		return s1 + item + s2;
+	private parseBody(lines: string[]) {
+		const bodyLines: string[] = [];
+		for (const line of lines) {
+			if (!line.startsWith(">")) {
+				return bodyLines;
+			}
+			bodyLines.push(line.replace(/^>\s?/, ""));
+		}
+		return bodyLines;
 	}
 
-	private async sendNote(note: ConnNote) {
+	private parsePreamble(str: string) {
+		const match = FC_PREAMBLE_P.exec(str);
+		if (!match) {
+			return undefined
+		}
+		return { id: match[1], title: match[2]!}
+	}
+
+	private async sendNote(note: Note) {
 		const res = await sendAddNoteRequest(note);
+		if (res.error) throw new Error(`AnkiConnect ${res.error}`);
+		return res.result;
+	}
+
+	private async findNoteById(id: number) {
+		const query =`nid:${id}`;
+		const res = await sendFindNoteRequest(query);
 		if (res.error) throw new Error(`AnkiConnect ${res.error}`);
 		return res.result;
 	}

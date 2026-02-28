@@ -14,6 +14,7 @@ enum ConnAction {
 	CREATE_DECK = "createDeck",
 	ADD_NOTE = "addNote",
 	DECK_NAMES = "deckNames",
+	FIND_NOTE = "findNotes"
 }
 
 interface ConnResult {
@@ -25,13 +26,13 @@ interface ConnRequest {
 	version: number
 }
 
-export interface ConnNote {
+export interface Note {
 	deckName: string,
 	modelName: string,
-	fields: ConnNoteFields
+	fields: NoteFields
 }
 
-export interface ConnNoteFields {
+export interface NoteFields {
 	Front: string,
 	Back: string
 }
@@ -51,16 +52,25 @@ export interface CreateDeckResult extends ConnResult {
 
 export interface AddNoteRequest extends ConnRequest {
 	params: {
-		note: ConnNote
+		note: Note
 	}
 }
 export interface AddNoteResult extends ConnResult {
 	result: number;
 }
 
+export interface FindNoteRequest extends ConnRequest {
+	params: {
+		query: string
+	}
+}
+export interface FindNoteResult extends ConnResult {
+	result: number[];
+}
+
 const BASE_REQUEST = { url: ANKI_CONN_URL, method: ANKI_CONN_METHOD };
 
-export function buildNote(Front: string, Back: string): ConnNote {
+export function buildNote(Front: string, Back: string): Note {
 	return {
 		deckName: TARGET_DECK,
 		modelName: DEFAULT_DECK_TYPE,
@@ -77,7 +87,7 @@ export async function sendCreateDeckRequest(deck: string): Promise<CreateDeckRes
 	return res.json as CreateDeckResult
 }
 
-export async function sendAddNoteRequest(note: ConnNote): Promise<AddNoteResult> {
+export async function sendAddNoteRequest(note: Note): Promise<AddNoteResult> {
 	const req: AddNoteRequest = {
 		action: ConnAction.ADD_NOTE,
 		version: ANKI_CONN_VERSION,
@@ -85,6 +95,18 @@ export async function sendAddNoteRequest(note: ConnNote): Promise<AddNoteResult>
 	}
 	const res = await buildAndSend(req);
 	return res.json as CreateDeckResult
+}
+
+export async function sendFindNoteRequest(query: string): Promise<FindNoteResult> {
+	const req: FindNoteRequest = {
+		action: ConnAction.FIND_NOTE,
+		version: ANKI_CONN_VERSION,
+		params: {
+			query
+		}
+	}
+	const res = await buildAndSend(req);
+	return res.json as FindNoteResult;
 }
 
 export async function sendDeckNamesRequest(): Promise<DeckNamesResult> {

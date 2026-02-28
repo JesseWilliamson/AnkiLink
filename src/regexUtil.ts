@@ -1,5 +1,6 @@
 
-export const FLASHCARD_PATTERN: RegExp = /\[!flashcard\]\s*([^\n]*)\n((?:>(?:[^\n]*)\n?)*)/;
+export const FC_PREAMBLE_P = /> \[!flashcard\]\s*(?:%%(\d+)%%)?\s*(.*)/;
+export const FC_CALLOUT_LENGTH = 14;
 
 export function splitCalloutBody(body: string) {
 	const lines =  body.split(">");
