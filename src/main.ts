@@ -4,7 +4,7 @@ import {
 	AnkiLinkSettings,
 	AnkiLinkSettingsTab,
 } from "./settings";
-import { TARGET_DECK, sendAddNoteRequest, buildNote, sendCreateDeckRequest, sendDeckNamesRequest, ConnNoteFields } from "./ankiConnectUtil";
+import { TARGET_DECK, sendAddNoteRequest, buildNote, sendCreateDeckRequest, sendDeckNamesRequest, ConnNoteFields, ConnNote } from "./ankiConnectUtil";
 import { FLASHCARD_PATTERN, splitCalloutBody } from "./regexUtil";
 
 export default class AnkiLink extends Plugin {
@@ -56,13 +56,8 @@ export default class AnkiLink extends Plugin {
 	async parse(): Promise<number> {
 		const { vault } = this.app;
 
-		const fileContents = await Promise.all(
-			vault.getMarkdownFiles().map((file) => vault.read(file)),
-		);
-		fileContents.forEach((c) => {
-			const values = FLASHCARD_PATTERN.exec(c);
-			values?.shift();
-		});
+		const markdownFiles = vault.getMarkdownFiles();
+
 		const deckNamesRes = await sendDeckNamesRequest();
 		if (deckNamesRes.error) throw new Error(`AnkiConnect: ${deckNamesRes.error}`)
 		const decks = deckNamesRes.result;
@@ -70,34 +65,34 @@ export default class AnkiLink extends Plugin {
 			const createDeckRes = await sendCreateDeckRequest(TARGET_DECK);
 			if (createDeckRes.error) throw new Error(`AnkiConnect: ${createDeckRes.error}`)
 		}
-		const cards = fileContents.reduce<ConnNoteFields[]>((acc, s) => {
-			const matches = FLASHCARD_PATTERN.exec(s);
-			if (!matches || matches.length < 3) {
-				return acc;
+		for (const file of markdownFiles) {
+			const s = await vault.read(file);
+			const match = FLASHCARD_PATTERN.exec(s);
+			if (!match || match.length < 3) {
+				continue;
 			}
-			const title = matches[1]!;
-			const body = matches[2]!;
-			const back = splitCalloutBody(body);
-			acc.push({ Front: title, Back: back });
-			return acc;
-		}, []);
-		console.log(cards)
-		for (const card of cards) {
-			await this.sendNote(card);
+			const title = match[1]!;
+			const rawBody = match[2]!;
+			const splitBody = splitCalloutBody(rawBody);
+			const card = buildNote(title, splitBody)
+			const index = await this.sendNote(card);
+			console.log(title.length);
+			const endIndex = match.index + title.length + 13;
+			const indexedFileContent = this.spliceString(s, endIndex, index.toString());
+			await vault.modify(file, indexedFileContent);
 		}
-		const note = buildNote(
-			"Cool new front note content",
-			"Boring back content"
-		)
-		const addNoteRes = await sendAddNoteRequest(note);
-		if (addNoteRes.error) throw new Error(`AnkiConnect: ${addNoteRes.error}`);
-
-		return fileContents.length;
+		return 0;
 	}
 
-	private async sendNote(noteFields: ConnNoteFields) {
-		const note = buildNote(noteFields.Front, noteFields.Back);
+	private spliceString(base: string, index: number, item: string): string {
+		const s1 = base.slice(0, index);
+		const s2 = base.slice(index, - 1)
+		return s1 + item + s2;
+	}
+
+	private async sendNote(note: ConnNote) {
 		const res = await sendAddNoteRequest(note);
 		if (res.error) throw new Error(`AnkiConnect ${res.error}`);
+		return res.result;
 	}
 }

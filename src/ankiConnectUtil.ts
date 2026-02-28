@@ -25,7 +25,7 @@ interface ConnRequest {
 	version: number
 }
 
-interface ConnNote {
+export interface ConnNote {
 	deckName: string,
 	modelName: string,
 	fields: ConnNoteFields
