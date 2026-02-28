@@ -4,7 +4,7 @@ import {
 	AnkiLinkSettings,
 	AnkiLinkSettingsTab,
 } from "./settings";
-import { TARGET_DECK, sendAddNoteRequest, buildNote, sendCreateDeckRequest, sendDeckNamesRequest, Note, sendFindNoteRequest } from "./ankiConnectUtil";
+import { TARGET_DECK, sendAddNoteRequest, buildNote, sendCreateDeckRequest, sendDeckNamesRequest, Note, getNoteById, updateNoteById } from "./ankiConnectUtil";
 import { FC_PREAMBLE_P } from "./regexUtil";
 
 interface ParsedNoteData {
@@ -75,6 +75,15 @@ export default class AnkiLink extends Plugin {
 			if (!notesData || !lines) {
 				continue;
 			}
+			const notesWithNoId = [];
+			const notesWithId = [];
+			for (const note of notesData) {
+				if (note.id == undefined) {
+					notesWithNoId.push(note);
+				} else {
+					notesWithId.push(note);
+				}
+			}
 			for (const noteData of notesData) {
 				if (noteData.id == undefined) {
 					noteData.id = await this.sendNote(noteData.note);
@@ -82,7 +91,21 @@ export default class AnkiLink extends Plugin {
 					linesModified = true;
 					totalAdded += 1;
 				} else {
-					//TODO Check if the note has changed and update it.
+					const ankiNote = await getNoteById(noteData.id);
+					if (ankiNote) {
+						const obsidianFields = noteData.note.fields;
+						const ankiFields = ankiNote.fields;
+						if (obsidianFields.Front !== ankiFields.Front.value || obsidianFields.Back !== ankiFields.Back.value) {
+							await updateNoteById(ankiNote.noteId, obsidianFields);
+						}
+					} else {
+						// Missing note for this ID in Anki (notesInfo returned [] or [{}]). Recreate it.
+						const newId = await this.sendNote(noteData.note);
+						noteData.id = newId;
+						lines[noteData.index] = `> [!flashcard] %%${newId}%% ${noteData.note.fields.Front}`;
+						linesModified = true;
+						totalAdded += 1;
+					}
 				}
 			}
 			if (linesModified) {
@@ -129,17 +152,17 @@ export default class AnkiLink extends Plugin {
 		const output = new Array<ParsedNoteData>();
 		let i = 0;
 		while (i < lines.length) {
-			i++;
 			const { id, title } = this.parsePreamble(lines[i]!) || {};
 			if (!title) {
+				i++;
 				continue;
 			}
 
-			const bodyLines = this.parseBody(lines.slice(i, -1));
+			const bodyLines = this.parseBody(lines.slice(i + 1));
 			const body = bodyLines.join("<br>");
 			const note = buildNote(title, body);
-			output.push({ id: id ? Number(id) : undefined, index: i, note })
-			i += bodyLines.length;
+			output.push({ id: id ? Number(id) : undefined, index: i, note });
+			i += bodyLines.length + 1;
 		}
 		return output;
 	}
@@ -152,6 +175,10 @@ export default class AnkiLink extends Plugin {
 	private parseBody(lines: string[]) {
 		const bodyLines: string[] = [];
 		for (const line of lines) {
+			// Stop when we reach the next flashcard preamble.
+			if (this.parsePreamble(line)) {
+				return bodyLines;
+			}
 			if (!line.startsWith(">")) {
 				return bodyLines;
 			}
@@ -173,15 +200,8 @@ export default class AnkiLink extends Plugin {
 		return { id: match[1], title: match[2]!}
 	}
 
-	private async sendNote(note: Note) {
+	private async sendNote(note: Note): Promise<number> {
 		const res = await sendAddNoteRequest(note);
-		if (res.error) throw new Error(`AnkiConnect ${res.error}`);
-		return res.result;
-	}
-
-	private async findNoteById(id: number) {
-		const query =`nid:${id}`;
-		const res = await sendFindNoteRequest(query);
 		if (res.error) throw new Error(`AnkiConnect ${res.error}`);
 		return res.result;
 	}

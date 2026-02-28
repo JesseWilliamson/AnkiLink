@@ -14,7 +14,8 @@ enum ConnAction {
 	CREATE_DECK = "createDeck",
 	ADD_NOTE = "addNote",
 	DECK_NAMES = "deckNames",
-	FIND_NOTE = "findNotes"
+	NOTES_INFO = "notesInfo",
+	UPDATE_NOTE_FIELDS = "updateNoteFields"
 }
 
 interface ConnResult {
@@ -29,7 +30,10 @@ interface ConnRequest {
 export interface Note {
 	deckName: string,
 	modelName: string,
-	fields: NoteFields
+	fields: NoteFields,
+	options: {
+		allowDuplicate: boolean
+	}
 }
 
 export interface NoteFields {
@@ -59,13 +63,70 @@ export interface AddNoteResult extends ConnResult {
 	result: number;
 }
 
-export interface FindNoteRequest extends ConnRequest {
+export interface NotesInfoRequest extends ConnRequest {
 	params: {
-		query: string
+		notes: number[];
 	}
 }
-export interface FindNoteResult extends ConnResult {
-	result: number[];
+export interface NoteInfo {
+	noteId: number;
+	modelName: string;
+	tags: string[];
+	fields: {
+		Front: { value: string; order: number };
+		Back: { value: string; order: number };
+	};
+}
+export interface NotesInfoResult extends ConnResult {
+	result: unknown[];
+}
+
+/**
+ * Check if a value from notesInfo is a valid note (and not an empty object
+ * returned when the note was deleted in Anki).
+ */
+function isValidNoteInfo(obj: unknown): obj is NoteInfo {
+	if (obj == null || typeof obj !== "object" || Array.isArray(obj)) {
+		return false;
+	}
+	const o = obj as Record<string, unknown>;
+	const fields = o.fields as Record<string, { value?: string }> | undefined;
+	return (
+		typeof o.noteId === "number" &&
+		fields != null &&
+		typeof fields === "object" &&
+		typeof fields.Front?.value === "string" &&
+		typeof fields.Back?.value === "string"
+	);
+}
+
+function getFirstValidNoteInfo(result: NotesInfoResult): NoteInfo | null {
+	const first = result.result[0];
+	return isValidNoteInfo(first) ? first : null;
+}
+
+export async function getNoteById(noteId: number): Promise<NoteInfo | undefined> {
+	const infoRes = await sendNotesInfoRequest([noteId]);
+	if (infoRes.error) throw new Error(`AnkiConnect ${infoRes.error}`);
+	const note = getFirstValidNoteInfo(infoRes);
+	return note ?? undefined;
+}
+
+export async function updateNoteById(noteId: number, fields: NoteFields): Promise<void> {
+	const updateRes = await sendUpdateNoteFieldsRequest(noteId, fields);
+	if (updateRes.error) throw new Error(`AnkiConnect ${updateRes.error}`);
+}
+
+export interface UpdateNoteFieldsRequest extends ConnRequest {
+	params: {
+		note: {
+			id: number;
+			fields: NoteFields;
+		}
+	}
+}
+export interface UpdateNoteFieldsResult extends ConnResult {
+	result: null;
 }
 
 const BASE_REQUEST = { url: ANKI_CONN_URL, method: ANKI_CONN_METHOD };
@@ -74,7 +135,10 @@ export function buildNote(Front: string, Back: string): Note {
 	return {
 		deckName: TARGET_DECK,
 		modelName: DEFAULT_DECK_TYPE,
-		fields: { Front, Back }
+		fields: { Front, Back },
+		options: {
+			allowDuplicate: true
+		}
 	}
 }
 export async function sendCreateDeckRequest(deck: string): Promise<CreateDeckResult> {
@@ -94,19 +158,27 @@ export async function sendAddNoteRequest(note: Note): Promise<AddNoteResult> {
 		params: { note }
 	}
 	const res = await buildAndSend(req);
-	return res.json as CreateDeckResult
+	return res.json as AddNoteResult
 }
 
-export async function sendFindNoteRequest(query: string): Promise<FindNoteResult> {
-	const req: FindNoteRequest = {
-		action: ConnAction.FIND_NOTE,
+export async function sendNotesInfoRequest(notes: number[]): Promise<NotesInfoResult> {
+	const req: NotesInfoRequest = {
+		action: ConnAction.NOTES_INFO,
 		version: ANKI_CONN_VERSION,
-		params: {
-			query
-		}
+		params: { notes }
 	}
 	const res = await buildAndSend(req);
-	return res.json as FindNoteResult;
+	return res.json as NotesInfoResult;
+}
+
+export async function sendUpdateNoteFieldsRequest(id: number, fields: NoteFields): Promise<UpdateNoteFieldsResult> {
+	const req: UpdateNoteFieldsRequest = {
+		action: ConnAction.UPDATE_NOTE_FIELDS,
+		version: ANKI_CONN_VERSION,
+		params: { note: { id, fields } }
+	}
+	const res = await buildAndSend(req);
+	return res.json as UpdateNoteFieldsResult;
 }
 
 export async function sendDeckNamesRequest(): Promise<DeckNamesResult> {
