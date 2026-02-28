@@ -97,6 +97,11 @@ export default class AnkiLink extends Plugin {
 		return (await vault.read(file)).split("\n");
 	}
 
+	/**
+	 * Read flashcard data from an obsidian document.
+	 * @param lines Plain text lines from an Obsidian document
+	 * @returns Flashcard data
+	 */
 	private parseDocument(lines: string[]): ParsedNoteData[] {
 		const output = new Array<ParsedNoteData>();
 		let i = 0;
@@ -116,6 +121,11 @@ export default class AnkiLink extends Plugin {
 		return output;
 	}
 
+	/**
+	 * Read a flashcard body from an array of plaintext lines.
+	 * @param lines Plain text lines, starting after a flashcard title line and continuing indefinitely
+	 * @returns The text content of each flashcard body line with the leading > and whitespace removed
+	 */
 	private parseBody(lines: string[]) {
 		const bodyLines: string[] = [];
 		for (const line of lines) {
@@ -127,6 +137,11 @@ export default class AnkiLink extends Plugin {
 		return bodyLines;
 	}
 
+	/**
+	 * Read a flashcard title line and preamble.
+	 * @param str A flashcard title line, including flashcard callout and optionally id comment
+	 * @returns A title and optionally an id
+	 */
 	private parsePreamble(str: string) {
 		const match = FC_PREAMBLE_P.exec(str);
 		if (!match) {
