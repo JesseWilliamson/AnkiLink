@@ -19,32 +19,43 @@ interface ParsedNoteData {
 
 interface NoteSyncResult {
 	added: number;
+	modified: number;
 	linesModified: boolean;
 	lines: string[];
 }
 
-export async function syncVaultNotes(app: App): Promise<number> {
+export interface SyncSummary {
+	added: number;
+	modified: number;
+}
+
+export async function syncVaultNotes(app: App): Promise<SyncSummary> {
 	const markdownFiles = app.vault.getMarkdownFiles();
 	await addMissingDecks();
 
 	let totalAdded = 0;
+	let totalModified = 0;
 	for (const file of markdownFiles) {
-		totalAdded += await syncSingleFile(app, file);
+		const result = await syncSingleFile(app, file);
+		totalAdded += result.added;
+		totalModified += result.modified;
 	}
-	return totalAdded;
+	return { added: totalAdded, modified: totalModified };
 }
 
-async function syncSingleFile(app: App, file: TFile): Promise<number> {
+async function syncSingleFile(app: App, file: TFile): Promise<SyncSummary> {
 	const originalLines = (await app.vault.read(file)).split("\n");
 	const notesData = parseDocument(originalLines);
-	if (notesData.length === 0) return 0;
+	if (notesData.length === 0) return { added: 0, modified: 0 };
 
 	let totalAdded = 0;
+	let totalModified = 0;
 	let linesModified = false;
 	let lines = originalLines;
 	for (const noteData of notesData) {
 		const result = await syncSingleNote(noteData, lines);
 		totalAdded += result.added;
+		totalModified += result.modified;
 		linesModified = linesModified || result.linesModified;
 		lines = result.lines;
 	}
@@ -52,7 +63,7 @@ async function syncSingleFile(app: App, file: TFile): Promise<number> {
 	if (linesModified) {
 		await app.vault.modify(file, lines.join("\n"));
 	}
-	return totalAdded;
+	return { added: totalAdded, modified: totalModified };
 }
 
 async function syncSingleNote(noteData: ParsedNoteData, lines: string[]): Promise<NoteSyncResult> {
@@ -70,15 +81,16 @@ async function syncSingleNote(noteData: ParsedNoteData, lines: string[]): Promis
 	const ankiFields = ankiNote.fields;
 	if (obsidianFields.Front !== ankiFields.Front.value || obsidianFields.Back !== ankiFields.Back.value) {
 		await updateNoteById(ankiNote.noteId, obsidianFields);
+		return { added: 0, modified: 1, linesModified: false, lines };
 	}
-	return { added: 0, linesModified: false, lines };
+	return { added: 0, modified: 0, linesModified: false, lines };
 }
 
 async function createAndWriteNoteId(noteData: ParsedNoteData, lines: string[]): Promise<NoteSyncResult> {
 	const newId = await sendNote(noteData.note);
 	const updatedLines = [...lines];
 	updatedLines[noteData.index] = `> [!flashcard] %%${newId}%% ${noteData.note.fields.Front}`;
-	return { added: 1, linesModified: true, lines: updatedLines };
+	return { added: 1, modified: 0, linesModified: true, lines: updatedLines };
 }
 
 async function addMissingDecks() {

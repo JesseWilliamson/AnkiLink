@@ -16,13 +16,8 @@ export default class AnkiLink extends Plugin {
 		this.addRibbonIcon(
 			"circle-question-mark",
 			"Sample",
-			(evt: MouseEvent) => {
-				// Called when the user clicks the icon.
-				const numStr = syncVaultNotes(this.app).then((n) => n.toString());
-				numStr.then(
-					(n) => new Notice(n),
-					(e) => console.error(e),
-				);
+			async (_evt: MouseEvent) => {
+				await this.runSyncAndNotify();
 			},
 		);
 
@@ -31,8 +26,7 @@ export default class AnkiLink extends Plugin {
 			id: "sync-cards",
 			name: "Sync cards",
 			callback: async () => {
-				const added = await syncVaultNotes(this.app);
-				new Notice(`Synced flashcards. Added ${added} note${added === 1 ? "" : "s"}.`);
+				await this.runSyncAndNotify();
 			},
 		});
 
@@ -66,5 +60,17 @@ export default class AnkiLink extends Plugin {
 	private insertFlashcard(editor: Editor) {
 		const template = "> [!flashcard] ";
 		editor.replaceSelection(template);
+	}
+
+	private async runSyncAndNotify(): Promise<void> {
+		try {
+			const { added, modified } = await syncVaultNotes(this.app);
+			new Notice(
+				`Synced flashcards.\nAdded ${added} card${added === 1 ? "" : "s"},\nmodified ${modified} card${modified === 1 ? "" : "s"}.`,
+			);
+		} catch (error) {
+			console.error(error);
+			new Notice("Failed to sync flashcards. Check console for details.");
+		}
 	}
 }
