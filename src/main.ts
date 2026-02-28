@@ -25,7 +25,7 @@ export default class AnkiLink extends Plugin {
 			"Sample",
 			(evt: MouseEvent) => {
 				// Called when the user clicks the icon.
-				const numStr = this.parse().then((n) => n.toString());
+				const numStr = this.syncNotes().then((n) => n.toString());
 				numStr.then(
 					(n) => new Notice(n),
 					(e) => console.error(e),
@@ -59,11 +59,58 @@ export default class AnkiLink extends Plugin {
 		await this.saveData(this.settings);
 	}
 
-	async parse(): Promise<number> {
+	async syncNotes(): Promise<number> {
 		const { vault } = this.app;
 
 		const markdownFiles = vault.getMarkdownFiles();
+		await this.addMissingDecks();
 
+		let totalAdded = 0;
+		const fileLines = await this.readFiles(vault, markdownFiles);
+		const fileNoteData = await this.extractNoteData(fileLines);
+		for (const file of markdownFiles) {
+			let linesModified = false;
+			const notesData = fileNoteData.get(file);
+			const lines = fileLines.get(file);
+			if (!notesData || !lines) {
+				continue;
+			}
+			for (const noteData of notesData) {
+				if (noteData.id == undefined) {
+					noteData.id = await this.sendNote(noteData.note);
+					lines[noteData.index] = `> [!flashcard] %%${noteData.id}%% ${noteData.note.fields.Front}`;
+					linesModified = true;
+					totalAdded += 1;
+				} else {
+					//TODO Check if the note has changed and update it.
+				}
+			}
+			if (linesModified) {
+				fileLines.set(file, lines);
+				await vault.modify(file, lines.join("\n"));
+			}
+		}
+		return totalAdded;
+	}
+
+	private async extractNoteData(fileLines: Map<TFile, string[]>) {
+		const fileNoteData = new Map<TFile, ParsedNoteData[]>();
+		for (const [file, lines] of fileLines) {
+			fileNoteData.set(file, this.parseDocument(lines))
+		}
+		return fileNoteData;
+	}
+
+	private async readFiles(vault: Vault, files: TFile[]) {
+		const fileLines = new Map<TFile, string[]>();
+		for (const file of files) {
+			const lines = (await vault.read(file)).split("\n");
+			fileLines.set(file, lines);
+		}
+		return fileLines;
+	}
+
+	private async addMissingDecks() {
 		const deckNamesRes = await sendDeckNamesRequest();
 		if (deckNamesRes.error) throw new Error(`AnkiConnect: ${deckNamesRes.error}`)
 		const decks = deckNamesRes.result;
@@ -71,30 +118,6 @@ export default class AnkiLink extends Plugin {
 			const createDeckRes = await sendCreateDeckRequest(TARGET_DECK);
 			if (createDeckRes.error) throw new Error(`AnkiConnect: ${createDeckRes.error}`)
 		}
-		let totalAdded = 0;
-		for (const file of markdownFiles) {
-			const lines = await this.readFile(vault, file);
-			let linesModified = false;
-			const noteDataList = this.parseDocument(lines);
-			for (const noteData of noteDataList) {
-				if (noteData.id == undefined) {
-					noteData.id = await this.sendNote(noteData.note);
-					lines[noteData.index] = `> [!flashcard] %%{noteId}%% ${noteData.note.fields.Front}`;
-					linesModified = true;
-					totalAdded += 1;
-				} else {
-					//TODO: Check if the note has changed and update it.
-				}
-			}
-			if (linesModified) {
-				await vault.modify(file, lines.join("\n"));
-			}
-		}
-		return totalAdded;
-	}
-
-	private async readFile(vault: Vault, file: TFile): Promise<string[]> {
-		return (await vault.read(file)).split("\n");
 	}
 
 	/**
