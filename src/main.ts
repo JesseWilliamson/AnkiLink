@@ -1,4 +1,4 @@
-import { Notice, Plugin, TFile, Vault } from "obsidian";
+import { Notice, Plugin, TFile } from "obsidian";
 import {
 	DEFAULT_SETTINGS,
 	AnkiLinkSettings,
@@ -11,6 +11,12 @@ interface ParsedNoteData {
 	id: number | undefined,
 	index: number,
 	note: Note
+}
+
+interface NoteSyncResult {
+	added: number;
+	linesModified: boolean;
+	lines: string[];
 }
 
 export default class AnkiLink extends Plugin {
@@ -59,85 +65,94 @@ export default class AnkiLink extends Plugin {
 		await this.saveData(this.settings);
 	}
 
+	/**
+	 * Sync all notes from all markdown files in the vault.
+	 * @returns The number of notes added
+	 */
 	async syncNotes(): Promise<number> {
-		const { vault } = this.app;
-
-		const markdownFiles = vault.getMarkdownFiles();
+		const markdownFiles = this.app.vault.getMarkdownFiles();
 		await this.addMissingDecks();
 
 		let totalAdded = 0;
-		const fileLines = await this.readFiles(vault, markdownFiles);
-		const fileNoteData = await this.extractNoteData(fileLines);
 		for (const file of markdownFiles) {
-			let linesModified = false;
-			const notesData = fileNoteData.get(file);
-			const lines = fileLines.get(file);
-			if (!notesData || !lines) {
-				continue;
-			}
-			const notesWithNoId = [];
-			const notesWithId = [];
-			for (const note of notesData) {
-				if (note.id == undefined) {
-					notesWithNoId.push(note);
-				} else {
-					notesWithId.push(note);
-				}
-			}
-			for (const noteData of notesData) {
-				if (noteData.id == undefined) {
-					noteData.id = await this.sendNote(noteData.note);
-					lines[noteData.index] = `> [!flashcard] %%${noteData.id}%% ${noteData.note.fields.Front}`;
-					linesModified = true;
-					totalAdded += 1;
-				} else {
-					const ankiNote = await getNoteById(noteData.id);
-					if (ankiNote) {
-						const obsidianFields = noteData.note.fields;
-						const ankiFields = ankiNote.fields;
-						if (obsidianFields.Front !== ankiFields.Front.value || obsidianFields.Back !== ankiFields.Back.value) {
-							await updateNoteById(ankiNote.noteId, obsidianFields);
-						}
-					} else {
-						// Missing note for this ID in Anki (notesInfo returned [] or [{}]). Recreate it.
-						const newId = await this.sendNote(noteData.note);
-						noteData.id = newId;
-						lines[noteData.index] = `> [!flashcard] %%${newId}%% ${noteData.note.fields.Front}`;
-						linesModified = true;
-						totalAdded += 1;
-					}
-				}
-			}
-			if (linesModified) {
-				fileLines.set(file, lines);
-				await vault.modify(file, lines.join("\n"));
-			}
+			const added = await this.syncSingleFile(file);
+			totalAdded += added;
 		}
 		return totalAdded;
 	}
 
-	private async extractNoteData(fileLines: Map<TFile, string[]>) {
-		const fileNoteData = new Map<TFile, ParsedNoteData[]>();
-		for (const [file, lines] of fileLines) {
-			fileNoteData.set(file, this.parseDocument(lines))
+	/**
+	 * Sync all notes from a document. Updates the document lines to include the new note IDs.
+	 * @param file The document to sync
+	 * @returns The number of notes added
+	 */
+	private async syncSingleFile(file: TFile): Promise<number> {
+		const originalLines = (await this.app.vault.read(file)).split("\n");
+		const notesData = this.parseDocument(originalLines);
+		if (notesData.length === 0) return 0;
+
+		let totalAdded = 0;
+		let linesModified = false;
+		let lines = originalLines;
+		for (const noteData of notesData) {
+			const result = await this.syncSingleNote(noteData, lines);
+			totalAdded += result.added;
+			linesModified = result.linesModified;
+			lines = result.lines;
 		}
-		return fileNoteData;
+
+		if (linesModified) {
+			await this.app.vault.modify(file, lines.join("\n"));
+		}
+		return totalAdded;
 	}
 
-	private async readFiles(vault: Vault, files: TFile[]) {
-		const fileLines = new Map<TFile, string[]>();
-		for (const file of files) {
-			const lines = (await vault.read(file)).split("\n");
-			fileLines.set(file, lines);
+	/**
+	 * Sync a single extracted note from a document.
+	 * @param noteData The note data to sync
+	 * @param lines The lines of the document
+	 * @returns The note sync result
+	 */
+	private async syncSingleNote(noteData: ParsedNoteData, lines: string[]): Promise<NoteSyncResult> {
+		if (noteData.id == undefined) {
+			return this.createAndWriteNoteId(noteData, lines);
 		}
-		return fileLines;
+
+		const ankiNote = await getNoteById(noteData.id);
+		if (!ankiNote) {
+			// Missing note for this ID in Anki (notesInfo returned [] or [{}]). Recreate it.
+			return this.createAndWriteNoteId(noteData, lines);
+		}
+
+		const obsidianFields = noteData.note.fields;
+		const ankiFields = ankiNote.fields;
+		if (obsidianFields.Front !== ankiFields.Front.value || obsidianFields.Back !== ankiFields.Back.value) {
+			await updateNoteById(ankiNote.noteId, obsidianFields);
+		}
+		return { added: 0, linesModified: false, lines };
 	}
 
+	/**
+	 * Create a new note in Anki and update document lines to include the new note ID.
+	 * @param noteData The note data to create
+	 * @param lines The lines of the document
+	 * @returns The note sync result
+	 */
+	private async createAndWriteNoteId(noteData: ParsedNoteData, lines: string[]): Promise<NoteSyncResult> {
+		const newId = await this.sendNote(noteData.note);
+		const updatedLines = [...lines];
+		updatedLines[noteData.index] = `> [!flashcard] %%${newId}%% ${noteData.note.fields.Front}`;
+		return { added: 1, linesModified: true, lines: updatedLines };
+	}
+
+	/**
+	 * Check if the target deck exists in Anki and create it if it doesn't.
+	 */
 	private async addMissingDecks() {
 		const deckNamesRes = await sendDeckNamesRequest();
 		if (deckNamesRes.error) throw new Error(`AnkiConnect: ${deckNamesRes.error}`)
 		const decks = deckNamesRes.result;
-		if (!decks.contains(TARGET_DECK)) {
+		if (!decks.includes(TARGET_DECK)) {
 			const createDeckRes = await sendCreateDeckRequest(TARGET_DECK);
 			if (createDeckRes.error) throw new Error(`AnkiConnect: ${createDeckRes.error}`)
 		}
