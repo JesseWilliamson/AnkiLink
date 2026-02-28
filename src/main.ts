@@ -1,4 +1,4 @@
-import { Notice, Plugin, TFile } from "obsidian";
+import { Editor, Notice, Plugin, TFile } from "obsidian";
 import {
 	DEFAULT_SETTINGS,
 	AnkiLinkSettings,
@@ -43,7 +43,18 @@ export default class AnkiLink extends Plugin {
 		this.addCommand({
 			id: "sync-cards",
 			name: "Sync cards",
-			callback: () => {},
+			callback: async () => {
+				const added = await this.syncNotes();
+				new Notice(`Synced flashcards. Added ${added} note${added === 1 ? "" : "s"}.`);
+			},
+		});
+
+		this.addCommand({
+			id: "add-flashcard",
+			name: "Add flashcard",
+			editorCallback: (editor: Editor) => {
+				this.insertFlashcard(editor);
+			},
 		});
 
 		// This adds a settings tab so the user can configure various aspects of the plugin
@@ -97,7 +108,7 @@ export default class AnkiLink extends Plugin {
 		for (const noteData of notesData) {
 			const result = await this.syncSingleNote(noteData, lines);
 			totalAdded += result.added;
-			linesModified = result.linesModified;
+			linesModified = linesModified || result.linesModified;
 			lines = result.lines;
 		}
 
@@ -219,5 +230,10 @@ export default class AnkiLink extends Plugin {
 		const res = await sendAddNoteRequest(note);
 		if (res.error) throw new Error(`AnkiConnect ${res.error}`);
 		return res.result;
+	}
+
+	private insertFlashcard(editor: Editor) {
+		const template = "> [!flashcard] ";
+		editor.replaceSelection(template);
 	}
 }
