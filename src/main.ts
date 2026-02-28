@@ -5,6 +5,7 @@ import {
 	AnkiLinkSettingsTab,
 } from "./settings";
 import { TARGET_DECK, sendAddNoteRequest, buildNote, sendCreateDeckRequest, sendDeckNamesRequest, ConnNoteFields } from "./ankiConnectUtil";
+import { FLASHCARD_PATTERN, splitCalloutBody } from "./regexUtil";
 
 export default class AnkiLink extends Plugin {
 	settings!: AnkiLinkSettings;
@@ -58,10 +59,8 @@ export default class AnkiLink extends Plugin {
 		const fileContents = await Promise.all(
 			vault.getMarkdownFiles().map((file) => vault.read(file)),
 		);
-		const pattern: RegExp =
-			/\[!flashcard\]\s*([^\n]*)\n((?:>(?:[^\n]*)\n?)*)/;
 		fileContents.forEach((c) => {
-			const values = pattern.exec(c);
+			const values = FLASHCARD_PATTERN.exec(c);
 			values?.shift();
 		});
 		const deckNamesRes = await sendDeckNamesRequest();
@@ -72,11 +71,14 @@ export default class AnkiLink extends Plugin {
 			if (createDeckRes.error) throw new Error(`AnkiConnect: ${createDeckRes.error}`)
 		}
 		const cards = fileContents.reduce<ConnNoteFields[]>((acc, s) => {
-			const matches = pattern.exec(s);
+			const matches = FLASHCARD_PATTERN.exec(s);
 			if (!matches || matches.length < 3) {
 				return acc;
 			}
-			acc.push({ Front: matches[1]!, Back: matches[2]! });
+			const title = matches[1]!;
+			const body = matches[2]!;
+			const back = splitCalloutBody(body);
+			acc.push({ Front: title, Back: back });
 			return acc;
 		}, []);
 		console.log(cards)
