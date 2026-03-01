@@ -1,4 +1,8 @@
 import { App, TFile } from "obsidian";
+import { remark } from "remark";
+import remarkBreaks from "remark-breaks";
+import remarkGfm from "remark-gfm";
+import remarkHtml from "remark-html";
 import {
 	ANKI_LINK_MODEL_NAME,
 	ANKI_LINK_TAG,
@@ -193,11 +197,21 @@ function parseDocument(lines: string[], deckName: string): ParsedNoteData[] {
 
 type BodyToken =
 	| { type: "text"; raw: string }
-	| { type: "fence"; raw: string; marker: "```" | "~~~"; info: string };
+	| { type: "fence"; raw: string; marker: "```" | "~~~" | "$$"; info: string };
 
 type BodySegment =
 	| { type: "text"; lines: string[] }
-	| { type: "code"; language: string; code: string };
+	| { type: "code"; language: string; code: string }
+	| { type: "math"; latex: string };
+
+const MATH_INLINE_OPEN = String.raw`\(`;
+const MATH_INLINE_CLOSE = String.raw`\)`;
+const MATH_BLOCK_OPEN = String.raw`\[`;
+const MATH_BLOCK_CLOSE = String.raw`\]`;
+const MARKDOWN_PROCESSOR = remark()
+	.use(remarkGfm)
+	.use(remarkBreaks)
+	.use(remarkHtml, { sanitize: false });
 
 function formatBodyForAnki(lines: string[]): string {
 	const tokens = lexBody(lines);
@@ -211,6 +225,9 @@ function lexBody(lines: string[]): BodyToken[] {
 
 function lexLine(line: string): BodyToken {
 	const trimmed = line.trim();
+	if (trimmed === "$$") {
+		return { type: "fence", raw: line, marker: "$$", info: "" };
+	}
 	if (trimmed.startsWith("```")) {
 		return { type: "fence", raw: line, marker: "```", info: trimmed.slice(3).trim() };
 	}
@@ -239,6 +256,21 @@ function parseBodyTokens(tokens: BodyToken[]): BodySegment[] {
 			continue;
 		}
 
+		if (token.marker === "$$") {
+			const closingMathIdx = findClosingFenceToken(tokens, i + 1, "$$");
+			if (closingMathIdx === -1) {
+				textBuffer.push(token.raw);
+				i++;
+				continue;
+			}
+
+			flushText();
+			const latex = tokens.slice(i + 1, closingMathIdx).map((currentToken) => currentToken.raw).join("\n");
+			segments.push({ type: "math", latex });
+			i = closingMathIdx + 1;
+			continue;
+		}
+
 		const closingFenceIdx = findClosingFenceToken(tokens, i + 1, token.marker);
 		if (closingFenceIdx === -1) {
 			// Keep unmatched fences as regular text to avoid dropping content.
@@ -257,7 +289,7 @@ function parseBodyTokens(tokens: BodyToken[]): BodySegment[] {
 	return segments;
 }
 
-function findClosingFenceToken(tokens: BodyToken[], startIdx: number, marker: "```" | "~~~"): number {
+function findClosingFenceToken(tokens: BodyToken[], startIdx: number, marker: "```" | "~~~" | "$$"): number {
 	for (let i = startIdx; i < tokens.length; i++) {
 		const token = tokens[i]!;
 		if (token.type === "fence" && token.marker === marker && token.info.length === 0) {
@@ -268,15 +300,142 @@ function findClosingFenceToken(tokens: BodyToken[], startIdx: number, marker: "`
 }
 
 function renderBodySegments(segments: BodySegment[]): string {
-	return segments.map((segment) => renderSegment(segment)).join("<br>");
+	return segments.map((segment) => renderSegment(segment)).join("\n");
 }
 
 function renderSegment(segment: BodySegment): string {
 	if (segment.type === "text") {
-		return segment.lines.join("<br>");
+		return renderMarkdownText(segment.lines);
 	}
-	const languageClass = segment.language.length > 0 ? ` class="language-${escapeHtmlAttribute(segment.language)}"` : "";
-	return `<pre><code${languageClass}>${escapeHtml(segment.code)}</code></pre>`;
+	if (segment.type === "code") {
+		const languageClass = segment.language.length > 0 ? ` class="language-${escapeHtmlAttribute(segment.language)}"` : "";
+		return `<pre><code${languageClass}>${escapeHtml(segment.code)}</code></pre>`;
+	}
+	return MATH_BLOCK_OPEN + segment.latex + MATH_BLOCK_CLOSE;
+}
+
+function renderMarkdownText(lines: string[]): string {
+	const markdown = lines.join("\n");
+	const { markdownWithPlaceholders, replacements } = extractInlineMathPlaceholders(markdown);
+	let rendered = String(MARKDOWN_PROCESSOR.processSync(markdownWithPlaceholders)).trim();
+	for (const [placeholder, replacement] of replacements) {
+		rendered = rendered.split(placeholder).join(replacement);
+	}
+	return rendered;
+}
+
+function extractInlineMathPlaceholders(markdown: string): {
+	markdownWithPlaceholders: string;
+	replacements: Map<string, string>;
+} {
+	let output = "";
+	const replacements = new Map<string, string>();
+	let placeholderCounter = 0;
+	let i = 0;
+	while (i < markdown.length) {
+		const inlineCode = consumeInlineCode(markdown, i);
+		if (inlineCode) {
+			output += inlineCode.text;
+			i += inlineCode.length;
+			continue;
+		}
+
+		const inlineMath = consumeInlineMath(markdown, i, placeholderCounter);
+		if (!inlineMath) {
+			output += markdown[i]!;
+			i++;
+			continue;
+		}
+
+		output += inlineMath.placeholder;
+		replacements.set(inlineMath.placeholder, inlineMath.replacement);
+		placeholderCounter = inlineMath.nextPlaceholderCounter;
+		i += inlineMath.length;
+	}
+	return { markdownWithPlaceholders: output, replacements };
+}
+
+function consumeInlineCode(input: string, startIdx: number): { text: string; length: number } | null {
+	const char = input[startIdx];
+	if (char !== "`" || isEscaped(input, startIdx)) return null;
+
+	const tickRunLength = countSameCharRun(input, startIdx, "`");
+	const closeTickIdx = findMatchingTickRun(input, startIdx + tickRunLength, tickRunLength);
+	if (closeTickIdx === -1) return null;
+
+	const endIdx = closeTickIdx + tickRunLength;
+	return { text: input.slice(startIdx, endIdx), length: endIdx - startIdx };
+}
+
+function consumeInlineMath(
+	input: string,
+	startIdx: number,
+	placeholderCounter: number,
+): { placeholder: string; replacement: string; length: number; nextPlaceholderCounter: number } | null {
+	const char = input[startIdx];
+	if (char !== "$" || isEscaped(input, startIdx)) return null;
+
+	const isDoubleDollar = input[startIdx + 1] === "$";
+	const openDelimiterLength = isDoubleDollar ? 2 : 1;
+	const closeIdx = findInlineMathEnd(input, startIdx + openDelimiterLength, isDoubleDollar);
+	if (closeIdx === -1) return null;
+
+	const contentStart = startIdx + openDelimiterLength;
+	const latex = input.slice(contentStart, closeIdx);
+	const closeDelimiterLength = isDoubleDollar ? 2 : 1;
+	const placeholder = `ANKILINK_MATH_${placeholderCounter}_TOKEN`;
+	return {
+		placeholder,
+		replacement: MATH_INLINE_OPEN + latex + MATH_INLINE_CLOSE,
+		length: closeIdx + closeDelimiterLength - startIdx,
+		nextPlaceholderCounter: placeholderCounter + 1,
+	};
+}
+
+function countSameCharRun(input: string, startIdx: number, char: string): number {
+	let runLength = 0;
+	for (let i = startIdx; i < input.length; i++) {
+		if (input[i] !== char) break;
+		runLength++;
+	}
+	return runLength;
+}
+
+function findMatchingTickRun(input: string, startIdx: number, tickRunLength: number): number {
+	let i = startIdx;
+	while (i < input.length) {
+		if (input[i] !== "`" || isEscaped(input, i)) {
+			i++;
+			continue;
+		}
+		if (countSameCharRun(input, i, "`") === tickRunLength) {
+			return i;
+		}
+		i++;
+	}
+	return -1;
+}
+
+function findInlineMathEnd(input: string, startIdx: number, isDoubleDollar: boolean): number {
+	for (let i = startIdx; i < input.length; i++) {
+		if (input[i] !== "$") continue;
+		if (isEscaped(input, i)) continue;
+		if (isDoubleDollar) {
+			if (input[i + 1] === "$") return i;
+			continue;
+		}
+		if (input[i + 1] === "$") continue;
+		return i;
+	}
+	return -1;
+}
+
+function isEscaped(input: string, idx: number): boolean {
+	let backslashes = 0;
+	for (let i = idx - 1; i >= 0 && input[i] === "\\"; i--) {
+		backslashes++;
+	}
+	return backslashes % 2 === 1;
 }
 
 function escapeHtml(value: string): string {
