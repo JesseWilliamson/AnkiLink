@@ -8,15 +8,23 @@ export enum DeckTypes {
 }
 
 export const TARGET_DECK = "Obsidian 4"
-export const DEFAULT_DECK_TYPE = DeckTypes.BASIC
+export const ANKI_LINK_MODEL_NAME = "AnkiLink Basic";
+const ANKI_LINK_CARD_NAME = "Card 1";
+const ANKI_LINK_MODEL_FRONT_TEMPLATE = "<div class=\"anki-link\">{{Front}}</div>";
+const ANKI_LINK_MODEL_BACK_TEMPLATE = "<div class=\"anki-link\">{{FrontSide}}<hr id=\"answer\">{{Back}}</div>";
+export const DEFAULT_DECK_TYPE = ANKI_LINK_MODEL_NAME;
 export const ANKI_LINK_TAG = "ankiLink"
 
 enum ConnAction {
 	CREATE_DECK = "createDeck",
+	CREATE_MODEL = "createModel",
 	ADD_NOTE = "addNote",
 	ADD_TAGS = "addTags",
 	CHANGE_DECK = "changeDeck",
 	DECK_NAMES = "deckNames",
+	MODEL_NAMES = "modelNames",
+	UPDATE_MODEL_TEMPLATES = "updateModelTemplates",
+	UPDATE_MODEL_STYLING = "updateModelStyling",
 	FIND_NOTES = "findNotes",
 	DELETE_NOTES = "deleteNotes",
 	NOTES_INFO = "notesInfo",
@@ -58,6 +66,56 @@ export interface CreateDeckRequest extends ConnRequest {
 }
 export interface CreateDeckResult extends ConnResult {
 	result: number;
+}
+
+export interface ModelNamesResult extends ConnResult {
+	result: string[];
+}
+
+interface CardTemplate {
+	Name: string;
+	Front: string;
+	Back: string;
+}
+
+export interface CreateModelRequest extends ConnRequest {
+	params: {
+		modelName: string;
+		inOrderFields: string[];
+		css: string;
+		cardTemplates: CardTemplate[];
+		isCloze: boolean;
+	}
+}
+
+export interface CreateModelResult extends ConnResult {
+	result: null;
+}
+
+export interface UpdateModelTemplatesRequest extends ConnRequest {
+	params: {
+		model: {
+			name: string;
+			templates: Record<string, { Front: string; Back: string }>;
+		};
+	}
+}
+
+export interface UpdateModelTemplatesResult extends ConnResult {
+	result: null;
+}
+
+export interface UpdateModelStylingRequest extends ConnRequest {
+	params: {
+		model: {
+			name: string;
+			css: string;
+		};
+	}
+}
+
+export interface UpdateModelStylingResult extends ConnResult {
+	result: null;
 }
 
 export interface AddNoteRequest extends ConnRequest {
@@ -291,6 +349,72 @@ export async function sendCreateDeckRequest(deck: string): Promise<CreateDeckRes
 	return res.json as CreateDeckResult
 }
 
+export async function sendModelNamesRequest(): Promise<ModelNamesResult> {
+	const res = await buildAndSend({
+		action: ConnAction.MODEL_NAMES,
+		version: ANKI_CONN_VERSION
+	});
+	return res.json as ModelNamesResult;
+}
+
+export async function sendCreateModelRequest(modelName = ANKI_LINK_MODEL_NAME): Promise<CreateModelResult> {
+	const req: CreateModelRequest = {
+		action: ConnAction.CREATE_MODEL,
+		version: ANKI_CONN_VERSION,
+		params: {
+			modelName,
+			inOrderFields: ["Front", "Back"],
+			css: ANKI_LINK_MODEL_CSS,
+			cardTemplates: [
+				{
+					Name: ANKI_LINK_CARD_NAME,
+					Front: ANKI_LINK_MODEL_FRONT_TEMPLATE,
+					Back: ANKI_LINK_MODEL_BACK_TEMPLATE,
+				},
+			],
+			isCloze: false,
+		},
+	};
+	const res = await buildAndSend(req);
+	return res.json as CreateModelResult;
+}
+
+export async function sendUpdateModelTemplatesRequest(modelName = ANKI_LINK_MODEL_NAME): Promise<UpdateModelTemplatesResult> {
+	const templates = {
+		[ANKI_LINK_CARD_NAME]: {
+			Front: ANKI_LINK_MODEL_FRONT_TEMPLATE,
+			Back: ANKI_LINK_MODEL_BACK_TEMPLATE,
+		},
+	};
+	const req: UpdateModelTemplatesRequest = {
+		action: ConnAction.UPDATE_MODEL_TEMPLATES,
+		version: ANKI_CONN_VERSION,
+		params: {
+			model: {
+				name: modelName,
+				templates,
+			},
+		},
+	};
+	const res = await buildAndSend(req);
+	return res.json as UpdateModelTemplatesResult;
+}
+
+export async function sendUpdateModelStylingRequest(modelName = ANKI_LINK_MODEL_NAME): Promise<UpdateModelStylingResult> {
+	const req: UpdateModelStylingRequest = {
+		action: ConnAction.UPDATE_MODEL_STYLING,
+		version: ANKI_CONN_VERSION,
+		params: {
+			model: {
+				name: modelName,
+				css: ANKI_LINK_MODEL_CSS,
+			},
+		},
+	};
+	const res = await buildAndSend(req);
+	return res.json as UpdateModelStylingResult;
+}
+
 export async function sendAddNoteRequest(note: Note): Promise<AddNoteResult> {
 	const req: AddNoteRequest = {
 		action: ConnAction.ADD_NOTE,
@@ -342,5 +466,35 @@ function build(action: ConnRequest): RequestUrlParam {
 }
 
 function escapeQueryValue(value: string): string {
-	return value.split("\"").join("\\\"");
+	return value.split("\"").join(String.raw`\"`);
 }
+
+const ANKI_LINK_MODEL_CSS = `
+.anki-link {
+  max-width: min(72ch, 100%);
+  margin: 0 auto;
+  text-align: left;
+}
+
+.anki-link pre {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  padding: 0.75em 1em;
+  border-radius: 8px;
+  overflow-x: auto;
+  white-space: pre;
+  line-height: 1.4;
+}
+
+.anki-link code {
+  font-family: "JetBrains Mono", "Fira Code", "Menlo", monospace;
+  font-size: 0.9em;
+}
+
+.anki-link :not(pre) > code {
+  background: #f3f3f3;
+  color: #222;
+  padding: 0.1em 0.3em;
+  border-radius: 4px;
+}
+`.trim();
