@@ -12,7 +12,6 @@ export default class AnkiLink extends Plugin {
 	async onload() {
 		await this.loadSettings();
 
-		// This creates an icon in the left ribbon.
 		this.addRibbonIcon(
 			"circle-question-mark",
 			"Sample",
@@ -21,7 +20,6 @@ export default class AnkiLink extends Plugin {
 			},
 		);
 
-		// This adds a simple command that can be triggered anywhere
 		this.addCommand({
 			id: "sync-cards",
 			name: "Sync cards",
@@ -38,12 +36,7 @@ export default class AnkiLink extends Plugin {
 			},
 		});
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
 		this.addSettingTab(new AnkiLinkSettingsTab(this.app, this));
-	}
-
-	onunload() {
-		// Put unload code here
 	}
 
 	async loadSettings() {
