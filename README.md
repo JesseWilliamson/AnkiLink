@@ -15,7 +15,7 @@ Turn your Obsidian notes into synced Anki flashcards for better retention.
 
 Each flashcard starts with a callout line and continues with quoted body lines:
 
-```md
+```
 > [!flashcard] Explain Big-O for binary search.
 > Binary search runs in **O(log n)** time.
 >
