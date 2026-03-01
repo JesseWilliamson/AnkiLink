@@ -70,6 +70,7 @@ export default class AnkiLink extends Plugin {
 			);
 		} catch (error) {
 			console.error(error);
+			// TODO: Provide the user with a more helpful error message.
 			new Notice("Failed to sync flashcards. Check console for details.");
 		}
 	}

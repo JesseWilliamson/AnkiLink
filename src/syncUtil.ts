@@ -154,7 +154,7 @@ function parseDocument(lines: string[]): ParsedNoteData[] {
 function parseBody(lines: string[]) {
 	const bodyLines: string[] = [];
 	for (const line of lines) {
-		// Stop when we reach the next flashcard preamble.
+		// Stop early if we reach another flashcard preamble.
 		if (parsePreamble(line)) {
 			return bodyLines;
 		}
