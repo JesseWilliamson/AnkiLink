@@ -15,6 +15,7 @@ enum ConnAction {
 	CREATE_DECK = "createDeck",
 	ADD_NOTE = "addNote",
 	ADD_TAGS = "addTags",
+	CHANGE_DECK = "changeDeck",
 	DECK_NAMES = "deckNames",
 	FIND_NOTES = "findNotes",
 	DELETE_NOTES = "deleteNotes",
@@ -96,6 +97,16 @@ export interface DeleteNotesResult extends ConnResult {
 	result: null;
 }
 
+export interface ChangeDeckRequest extends ConnRequest {
+	params: {
+		cards: number[];
+		deck: string;
+	}
+}
+export interface ChangeDeckResult extends ConnResult {
+	result: null;
+}
+
 export interface NotesInfoRequest extends ConnRequest {
 	params: {
 		notes: number[];
@@ -105,6 +116,7 @@ export interface NoteInfo {
 	noteId: number;
 	modelName: string;
 	tags: string[];
+	cards: number[];
 	fields: {
 		Front: { value: string; order: number };
 		Back: { value: string; order: number };
@@ -184,6 +196,52 @@ export async function findNoteIdsByTag(tag = ANKI_LINK_TAG): Promise<number[]> {
 	return findNotesRes.result;
 }
 
+export async function findNoteIdsByTagInDeck(deckName: string, tag = ANKI_LINK_TAG): Promise<number[]> {
+	const req: FindNotesRequest = {
+		action: ConnAction.FIND_NOTES,
+		version: ANKI_CONN_VERSION,
+		params: {
+			query: `tag:${tag} deck:"${escapeQueryValue(deckName)}"`,
+		},
+	};
+	const res = await buildAndSend(req);
+	const findNotesRes = res.json as FindNotesResult;
+	if (findNotesRes.error) throw new Error(`AnkiConnect ${findNotesRes.error}`);
+	return findNotesRes.result;
+}
+
+export async function noteIsInDeck(noteId: number, deckName: string): Promise<boolean> {
+	const req: FindNotesRequest = {
+		action: ConnAction.FIND_NOTES,
+		version: ANKI_CONN_VERSION,
+		params: {
+			query: `nid:${noteId} deck:"${escapeQueryValue(deckName)}"`,
+		},
+	};
+	const res = await buildAndSend(req);
+	const findNotesRes = res.json as FindNotesResult;
+	if (findNotesRes.error) throw new Error(`AnkiConnect ${findNotesRes.error}`);
+	return findNotesRes.result.includes(noteId);
+}
+
+export async function moveNoteToDeck(noteId: number, deckName: string): Promise<void> {
+	const note = await getNoteById(noteId);
+	if (!note || !Array.isArray(note.cards) || note.cards.length === 0) {
+		throw new Error(`AnkiConnect could not move note ${noteId} to deck "${deckName}"`);
+	}
+	const req: ChangeDeckRequest = {
+		action: ConnAction.CHANGE_DECK,
+		version: ANKI_CONN_VERSION,
+		params: {
+			cards: note.cards,
+			deck: deckName,
+		},
+	};
+	const res = await buildAndSend(req);
+	const changeDeckRes = res.json as ChangeDeckResult;
+	if (changeDeckRes.error) throw new Error(`AnkiConnect ${changeDeckRes.error}`);
+}
+
 export async function deleteNotesById(noteIds: number[]): Promise<void> {
 	if (noteIds.length === 0) return;
 	const req: DeleteNotesRequest = {
@@ -212,9 +270,9 @@ export interface UpdateNoteFieldsResult extends ConnResult {
 
 const BASE_REQUEST = { url: ANKI_CONN_URL, method: ANKI_CONN_METHOD };
 
-export function buildNote(Front: string, Back: string): Note {
+export function buildNote(Front: string, Back: string, deckName = TARGET_DECK): Note {
 	return {
-		deckName: TARGET_DECK,
+		deckName,
 		modelName: DEFAULT_DECK_TYPE,
 		fields: { Front, Back },
 		tags: [ANKI_LINK_TAG],
@@ -281,4 +339,8 @@ async function buildAndSend(req: ConnRequest): Promise<RequestUrlResponse> {
 
 function build(action: ConnRequest): RequestUrlParam {
 	return { ...BASE_REQUEST, body: JSON.stringify(action) };
+}
+
+function escapeQueryValue(value: string): string {
+	return value.split("\"").join("\\\"");
 }

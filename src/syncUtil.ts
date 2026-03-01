@@ -2,13 +2,14 @@ import { App, TFile } from "obsidian";
 import {
 	ANKI_LINK_TAG,
 	Note,
-	TARGET_DECK,
 	addTagToNotes,
 	buildNote,
 	deleteNotesById,
 	findNoteIdsByTag,
 	getNoteById,
+	moveNoteToDeck,
 	noteHasTag,
+	noteIsInDeck,
 	sendAddNoteRequest,
 	sendCreateDeckRequest,
 	sendDeckNamesRequest,
@@ -44,14 +45,26 @@ interface FileSyncResult {
 
 export async function syncVaultNotes(app: App): Promise<SyncSummary> {
 	const markdownFiles = app.vault.getMarkdownFiles();
-	await addMissingDecks();
+	const fileDecks = new Map<string, string>();
+	const decksInUse = new Set<string>();
+	for (const file of markdownFiles) {
+		const deckName = await getDeckNameForFile(app, file);
+		if (!deckName) continue;
+		fileDecks.set(file.path, deckName);
+		decksInUse.add(deckName);
+	}
+
+	await ensureDecksExist(decksInUse);
 	const taggedNoteIdsAtStart = new Set(await findNoteIdsByTag(ANKI_LINK_TAG));
 
 	let totalAdded = 0;
 	let totalModified = 0;
 	const seenNoteIds = new Set<number>();
 	for (const file of markdownFiles) {
-		const result = await syncSingleFile(app, file);
+		const deckName = fileDecks.get(file.path);
+		if (!deckName) continue;
+
+		const result = await syncSingleFile(app, file, deckName);
 		totalAdded += result.added;
 		totalModified += result.modified;
 		for (const noteId of result.notesInDocument) {
@@ -65,9 +78,9 @@ export async function syncVaultNotes(app: App): Promise<SyncSummary> {
 	return { added: totalAdded, modified: totalModified, deleted: orphanedNoteIds.length };
 }
 
-async function syncSingleFile(app: App, file: TFile): Promise<FileSyncResult> {
+async function syncSingleFile(app: App, file: TFile, deckName: string): Promise<FileSyncResult> {
 	const originalLines = (await app.vault.read(file)).split("\n");
-	const notesData = parseDocument(originalLines);
+	const notesData = parseDocument(originalLines, deckName);
 	if (notesData.length === 0) return { added: 0, modified: 0, notesInDocument: new Set() };
 
 	let totalAdded = 0;
@@ -76,7 +89,7 @@ async function syncSingleFile(app: App, file: TFile): Promise<FileSyncResult> {
 	let lines = originalLines;
 	const notesInDocument = new Set<number>();
 	for (const noteData of notesData) {
-		const result = await syncSingleNote(noteData, lines);
+		const result = await syncSingleNote(noteData, lines, deckName);
 		totalAdded += result.added;
 		totalModified += result.modified;
 		linesModified = linesModified || result.linesModified;
@@ -90,7 +103,7 @@ async function syncSingleFile(app: App, file: TFile): Promise<FileSyncResult> {
 	return { added: totalAdded, modified: totalModified, notesInDocument };
 }
 
-async function syncSingleNote(noteData: ParsedNoteData, lines: string[]): Promise<NoteSyncResult> {
+async function syncSingleNote(noteData: ParsedNoteData, lines: string[], deckName: string | undefined): Promise<NoteSyncResult> {
 	if (noteData.id == undefined) {
 		return createAndWriteNoteId(noteData, lines);
 	}
@@ -106,13 +119,19 @@ async function syncSingleNote(noteData: ParsedNoteData, lines: string[]): Promis
 		return { added: 0, modified: 0, linesModified: false, lines, noteId: ankiNote.noteId };
 	}
 
+	let noteWasModified = false;
+	if (deckName && !(await noteIsInDeck(ankiNote.noteId, deckName))) {
+		await moveNoteToDeck(ankiNote.noteId, deckName);
+		noteWasModified = true;
+	}
+
 	const obsidianFields = noteData.note.fields;
 	const ankiFields = ankiNote.fields;
 	if (obsidianFields.Front !== ankiFields.Front.value || obsidianFields.Back !== ankiFields.Back.value) {
 		await updateNoteById(ankiNote.noteId, obsidianFields);
-		return { added: 0, modified: 1, linesModified: false, lines, noteId: ankiNote.noteId };
+		noteWasModified = true;
 	}
-	return { added: 0, modified: 0, linesModified: false, lines, noteId: ankiNote.noteId };
+	return { added: 0, modified: noteWasModified ? 1 : 0, linesModified: false, lines, noteId: ankiNote.noteId };
 }
 
 async function createAndWriteNoteId(noteData: ParsedNoteData, lines: string[]): Promise<NoteSyncResult> {
@@ -122,17 +141,19 @@ async function createAndWriteNoteId(noteData: ParsedNoteData, lines: string[]): 
 	return { added: 1, modified: 0, linesModified: true, lines: updatedLines, noteId: newId };
 }
 
-async function addMissingDecks() {
+async function ensureDecksExist(deckNames: Set<string>) {
+	if (deckNames.size === 0) return;
 	const deckNamesRes = await sendDeckNamesRequest();
 	if (deckNamesRes.error) throw new Error(`AnkiConnect: ${deckNamesRes.error}`);
-	const decks = deckNamesRes.result;
-	if (!decks.includes(TARGET_DECK)) {
-		const createDeckRes = await sendCreateDeckRequest(TARGET_DECK);
+	const existingDecks = new Set(deckNamesRes.result);
+	for (const deckName of deckNames) {
+		if (existingDecks.has(deckName)) continue;
+		const createDeckRes = await sendCreateDeckRequest(deckName);
 		if (createDeckRes.error) throw new Error(`AnkiConnect: ${createDeckRes.error}`);
 	}
 }
 
-function parseDocument(lines: string[]): ParsedNoteData[] {
+function parseDocument(lines: string[], deckName: string): ParsedNoteData[] {
 	const output = new Array<ParsedNoteData>();
 	let i = 0;
 	while (i < lines.length) {
@@ -144,7 +165,7 @@ function parseDocument(lines: string[]): ParsedNoteData[] {
 
 		const bodyLines = parseBody(lines.slice(i + 1));
 		const body = bodyLines.join("<br>");
-		const note = buildNote(title, body);
+		const note = buildNote(title, body, deckName);
 		output.push({ id: id ? Number(id) : undefined, index: i, note });
 		i += bodyLines.length + 1;
 	}
@@ -178,4 +199,20 @@ async function sendNote(note: Note): Promise<number> {
 	const res = await sendAddNoteRequest(note);
 	if (res.error) throw new Error(`AnkiConnect ${res.error}`);
 	return res.result;
+}
+
+async function getDeckNameForFile(app: App, file: TFile): Promise<string | undefined> {
+	let deckName: string | undefined;
+	try {
+		await app.fileManager.processFrontMatter(file, (frontMatter) => {
+			const metadata = frontMatter as Record<string, unknown>;
+			const configuredDeck = metadata["anki deck"];
+			deckName = typeof configuredDeck === "string" && configuredDeck.trim().length > 0
+				? configuredDeck.trim()
+				: undefined;
+		});
+		return deckName;
+	} catch {
+		return undefined;
+	}
 }
