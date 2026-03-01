@@ -78,8 +78,7 @@ export default class AnkiLink extends Plugin {
 		try {
 			const { added, modified, deleted } = await syncVaultNotes(this.app);
 			globalThis.clearInterval(spinnerIntervalId);
-			syncingNotice.hide();
-			new Notice(
+			syncingNotice.setMessage(
 				`Synced flashcards.\nAdded ${added} card${added === 1 ? "" : "s"},\nmodified ${modified} card${modified === 1 ? "" : "s"},\ndeleted ${deleted} card${deleted === 1 ? "" : "s"}.`,
 			);
 		} catch (error) {
