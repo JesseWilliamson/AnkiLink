@@ -56,13 +56,35 @@ export default class AnkiLink extends Plugin {
 	}
 
 	private async runSyncAndNotify(): Promise<void> {
-		new Notice("Starting flashcard sync...");
+		const syncingNotice = new Notice("Syncing flashcards", 0);
+		const spinnerFrames = [
+			"⠋",
+			"⠙",
+			"⠹",
+			"⠸",
+			"⠼",
+			"⠴",
+			"⠦",
+			"⠧",
+			"⠇",
+			"⠏",
+		];
+		let spinnerFrameIndex = 0;
+		const spinnerIntervalId = globalThis.setInterval(() => {
+			const spinner = spinnerFrames[spinnerFrameIndex % spinnerFrames.length]!;
+			syncingNotice.setMessage(`${spinner} Syncing flashcards`);
+			spinnerFrameIndex += 1;
+		}, 90);
 		try {
 			const { added, modified, deleted } = await syncVaultNotes(this.app);
+			globalThis.clearInterval(spinnerIntervalId);
+			syncingNotice.hide();
 			new Notice(
 				`Synced flashcards.\nAdded ${added} card${added === 1 ? "" : "s"},\nmodified ${modified} card${modified === 1 ? "" : "s"},\ndeleted ${deleted} card${deleted === 1 ? "" : "s"}.`,
 			);
 		} catch (error) {
+			globalThis.clearInterval(spinnerIntervalId);
+			syncingNotice.hide();
 			console.error(error);
 			new Notice(`Failed to sync flashcards: ${this.getErrorMessage(error)}`);
 		}
