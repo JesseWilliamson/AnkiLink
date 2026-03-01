@@ -1,8 +1,8 @@
 import { RequestUrlParam } from "obsidian";
 import { defaultAnkiConnectClient } from "./anki-connect/client";
-import { AnkiActionResponse, Note, NoteFields, NoteInfo } from "./anki-connect/types";
+import { AnkiActionResponse, AnkiMultiAction, Note, NoteFields, NoteInfo } from "./anki-connect/types";
 
-export type { Note, NoteFields, NoteInfo } from "./anki-connect/types";
+export type { AnkiMultiAction, Note, NoteFields, NoteInfo } from "./anki-connect/types";
 
 export enum DeckTypes {
 	BASIC = "basic",
@@ -48,6 +48,10 @@ export interface AddNoteResult extends ConnResult {
 	result: number;
 }
 
+export interface AddNotesResult extends ConnResult {
+	result: (number | null)[];
+}
+
 export interface AddTagsResult extends ConnResult {
 	result: null;
 }
@@ -70,6 +74,10 @@ export interface NotesInfoResult extends ConnResult {
 
 export interface UpdateNoteFieldsResult extends ConnResult {
 	result: null;
+}
+
+export interface MultiResult extends ConnResult {
+	result: AnkiActionResponse<unknown>[];
 }
 
 /**
@@ -219,12 +227,20 @@ export async function sendAddNoteRequest(note: Note): Promise<AddNoteResult> {
 	return toResult(defaultAnkiConnectClient.addNote(note));
 }
 
+export async function sendAddNotesRequest(notes: Note[]): Promise<AddNotesResult> {
+	return toResult(defaultAnkiConnectClient.addNotes(notes));
+}
+
 export async function sendNotesInfoRequest(notes: number[]): Promise<NotesInfoResult> {
 	return toResult(defaultAnkiConnectClient.notesInfo(notes));
 }
 
 export async function sendUpdateNoteFieldsRequest(id: number, fields: NoteFields): Promise<UpdateNoteFieldsResult> {
 	return toResult(defaultAnkiConnectClient.updateNoteFields(id, fields));
+}
+
+export async function sendMultiRequest(actions: AnkiMultiAction[]): Promise<MultiResult> {
+	return toResult(defaultAnkiConnectClient.multi(actions));
 }
 
 export async function sendDeckNamesRequest(): Promise<DeckNamesResult> {

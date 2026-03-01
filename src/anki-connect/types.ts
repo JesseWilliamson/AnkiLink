@@ -3,6 +3,11 @@ export interface AnkiActionResponse<T> {
 	result: T;
 }
 
+export interface AnkiMultiAction {
+	action: string;
+	params?: unknown;
+}
+
 export interface NoteFields {
 	Front: string;
 	Back: string;
