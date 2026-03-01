@@ -9,11 +9,15 @@ export enum DeckTypes {
 
 export const TARGET_DECK = "Obsidian 4"
 export const DEFAULT_DECK_TYPE = DeckTypes.BASIC
+export const ANKI_LINK_TAG = "ankiLink"
 
 enum ConnAction {
 	CREATE_DECK = "createDeck",
 	ADD_NOTE = "addNote",
+	ADD_TAGS = "addTags",
 	DECK_NAMES = "deckNames",
+	FIND_NOTES = "findNotes",
+	DELETE_NOTES = "deleteNotes",
 	NOTES_INFO = "notesInfo",
 	UPDATE_NOTE_FIELDS = "updateNoteFields"
 }
@@ -31,6 +35,7 @@ export interface Note {
 	deckName: string,
 	modelName: string,
 	fields: NoteFields,
+	tags: string[],
 	options: {
 		allowDuplicate: boolean
 	}
@@ -61,6 +66,34 @@ export interface AddNoteRequest extends ConnRequest {
 }
 export interface AddNoteResult extends ConnResult {
 	result: number;
+}
+
+export interface AddTagsRequest extends ConnRequest {
+	params: {
+		notes: number[];
+		tags: string;
+	}
+}
+export interface AddTagsResult extends ConnResult {
+	result: null;
+}
+
+export interface FindNotesRequest extends ConnRequest {
+	params: {
+		query: string;
+	}
+}
+export interface FindNotesResult extends ConnResult {
+	result: number[];
+}
+
+export interface DeleteNotesRequest extends ConnRequest {
+	params: {
+		notes: number[];
+	}
+}
+export interface DeleteNotesResult extends ConnResult {
+	result: null;
 }
 
 export interface NotesInfoRequest extends ConnRequest {
@@ -117,6 +150,54 @@ export async function updateNoteById(noteId: number, fields: NoteFields): Promis
 	if (updateRes.error) throw new Error(`AnkiConnect ${updateRes.error}`);
 }
 
+export function noteHasTag(note: NoteInfo, tag = ANKI_LINK_TAG): boolean {
+	const normalizedTag = tag.toLowerCase();
+	return note.tags.some((currentTag) => currentTag.toLowerCase() === normalizedTag);
+}
+
+export async function addTagToNotes(noteIds: number[], tag = ANKI_LINK_TAG): Promise<void> {
+	if (noteIds.length === 0) return;
+	const req: AddTagsRequest = {
+		action: ConnAction.ADD_TAGS,
+		version: ANKI_CONN_VERSION,
+		params: {
+			notes: noteIds,
+			tags: tag,
+		},
+	};
+	const res = await buildAndSend(req);
+	const addTagsRes = res.json as AddTagsResult;
+	if (addTagsRes.error) throw new Error(`AnkiConnect ${addTagsRes.error}`);
+}
+
+export async function findNoteIdsByTag(tag = ANKI_LINK_TAG): Promise<number[]> {
+	const req: FindNotesRequest = {
+		action: ConnAction.FIND_NOTES,
+		version: ANKI_CONN_VERSION,
+		params: {
+			query: `tag:${tag}`,
+		},
+	};
+	const res = await buildAndSend(req);
+	const findNotesRes = res.json as FindNotesResult;
+	if (findNotesRes.error) throw new Error(`AnkiConnect ${findNotesRes.error}`);
+	return findNotesRes.result;
+}
+
+export async function deleteNotesById(noteIds: number[]): Promise<void> {
+	if (noteIds.length === 0) return;
+	const req: DeleteNotesRequest = {
+		action: ConnAction.DELETE_NOTES,
+		version: ANKI_CONN_VERSION,
+		params: {
+			notes: noteIds,
+		},
+	};
+	const res = await buildAndSend(req);
+	const deleteNotesRes = res.json as DeleteNotesResult;
+	if (deleteNotesRes.error) throw new Error(`AnkiConnect ${deleteNotesRes.error}`);
+}
+
 export interface UpdateNoteFieldsRequest extends ConnRequest {
 	params: {
 		note: {
@@ -136,6 +217,7 @@ export function buildNote(Front: string, Back: string): Note {
 		deckName: TARGET_DECK,
 		modelName: DEFAULT_DECK_TYPE,
 		fields: { Front, Back },
+		tags: [ANKI_LINK_TAG],
 		options: {
 			allowDuplicate: true
 		}

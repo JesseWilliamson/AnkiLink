@@ -64,9 +64,9 @@ export default class AnkiLink extends Plugin {
 
 	private async runSyncAndNotify(): Promise<void> {
 		try {
-			const { added, modified } = await syncVaultNotes(this.app);
+			const { added, modified, deleted } = await syncVaultNotes(this.app);
 			new Notice(
-				`Synced flashcards.\nAdded ${added} card${added === 1 ? "" : "s"},\nmodified ${modified} card${modified === 1 ? "" : "s"}.`,
+				`Synced flashcards.\nAdded ${added} card${added === 1 ? "" : "s"},\nmodified ${modified} card${modified === 1 ? "" : "s"},\ndeleted ${deleted} card${deleted === 1 ? "" : "s"}.`,
 			);
 		} catch (error) {
 			console.error(error);
