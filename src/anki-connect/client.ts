@@ -1,0 +1,109 @@
+import { requestUrl, RequestUrlParam, RequestUrlResponse } from "obsidian";
+import { AnkiActionResponse, CreateModelInput, Note, NoteFields } from "./types";
+
+const DEFAULT_ANKI_CONNECT_URL = "http://localhost:8765";
+const DEFAULT_ANKI_CONNECT_VERSION = 6;
+
+type AnkiAction =
+	| "createDeck"
+	| "createModel"
+	| "addNote"
+	| "addTags"
+	| "changeDeck"
+	| "deckNames"
+	| "modelNames"
+	| "updateModelTemplates"
+	| "updateModelStyling"
+	| "findNotes"
+	| "deleteNotes"
+	| "notesInfo"
+	| "updateNoteFields";
+
+interface AnkiConnectClientOptions {
+	url?: string;
+	version?: number;
+}
+
+export class AnkiConnectClient {
+	private readonly url: string;
+	private readonly version: number;
+
+	constructor(options: AnkiConnectClientOptions = {}) {
+		this.url = options.url ?? DEFAULT_ANKI_CONNECT_URL;
+		this.version = options.version ?? DEFAULT_ANKI_CONNECT_VERSION;
+	}
+
+	private buildRequest(action: AnkiAction, params?: unknown): RequestUrlParam {
+		return {
+			url: this.url,
+			method: "POST",
+			body: JSON.stringify({ action, version: this.version, params }),
+		};
+	}
+
+	private async send<T>(action: AnkiAction, params?: unknown): Promise<AnkiActionResponse<T>> {
+		const response: RequestUrlResponse = await requestUrl(this.buildRequest(action, params));
+		return response.json as AnkiActionResponse<T>;
+	}
+
+	async deckNames(): Promise<AnkiActionResponse<string[]>> {
+		return this.send<string[]>("deckNames");
+	}
+
+	async createDeck(deck: string): Promise<AnkiActionResponse<number>> {
+		return this.send<number>("createDeck", { deck });
+	}
+
+	async modelNames(): Promise<AnkiActionResponse<string[]>> {
+		return this.send<string[]>("modelNames");
+	}
+
+	async createModel(model: CreateModelInput): Promise<AnkiActionResponse<null>> {
+		return this.send<null>("createModel", model);
+	}
+
+	async updateModelTemplates(
+		modelName: string,
+		templates: Record<string, { Front: string; Back: string }>
+	): Promise<AnkiActionResponse<null>> {
+		return this.send<null>("updateModelTemplates", {
+			model: { name: modelName, templates },
+		});
+	}
+
+	async updateModelStyling(modelName: string, css: string): Promise<AnkiActionResponse<null>> {
+		return this.send<null>("updateModelStyling", {
+			model: { name: modelName, css },
+		});
+	}
+
+	async addNote(note: Note): Promise<AnkiActionResponse<number>> {
+		return this.send<number>("addNote", { note });
+	}
+
+	async addTags(notes: number[], tags: string): Promise<AnkiActionResponse<null>> {
+		return this.send<null>("addTags", { notes, tags });
+	}
+
+	async findNotes(query: string): Promise<AnkiActionResponse<number[]>> {
+		return this.send<number[]>("findNotes", { query });
+	}
+
+	async deleteNotes(notes: number[]): Promise<AnkiActionResponse<null>> {
+		return this.send<null>("deleteNotes", { notes });
+	}
+
+	async notesInfo(notes: number[]): Promise<AnkiActionResponse<unknown[]>> {
+		return this.send<unknown[]>("notesInfo", { notes });
+	}
+
+	async updateNoteFields(id: number, fields: NoteFields): Promise<AnkiActionResponse<null>> {
+		return this.send<null>("updateNoteFields", { note: { id, fields } });
+	}
+
+	async changeDeck(cards: number[], deck: string): Promise<AnkiActionResponse<null>> {
+		return this.send<null>("changeDeck", { cards, deck });
+	}
+}
+
+export const defaultAnkiConnectClient = new AnkiConnectClient();
