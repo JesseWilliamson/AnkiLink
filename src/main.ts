@@ -56,6 +56,7 @@ export default class AnkiLink extends Plugin {
 	}
 
 	private async runSyncAndNotify(): Promise<void> {
+		new Notice("Starting flashcard sync...");
 		try {
 			const { added, modified, deleted } = await syncVaultNotes(this.app);
 			new Notice(
@@ -63,8 +64,19 @@ export default class AnkiLink extends Plugin {
 			);
 		} catch (error) {
 			console.error(error);
-			// TODO: Provide the user with a more helpful error message.
-			new Notice("Failed to sync flashcards. Check console for details.");
+			new Notice(`Failed to sync flashcards: ${this.getErrorMessage(error)}`);
 		}
+	}
+
+	private getErrorMessage(error: unknown): string {
+		if (error instanceof Error && error.message) {
+			return error.message;
+		}
+
+		if (typeof error === "string" && error.trim().length > 0) {
+			return error;
+		}
+
+		return "Unknown error";
 	}
 }
