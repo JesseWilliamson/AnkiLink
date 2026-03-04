@@ -1,18 +1,14 @@
 import { Editor, Modal, Notice, Plugin, TFile, setIcon } from "obsidian";
-import { DEFAULT_SETTINGS, AnkiLinkSettings, AnkiLinkSettingsTab } from "./settings";
 import { syncVaultNotes } from "./syncUtil";
 import { FC_PREAMBLE_P } from "./regexUtil";
 
 const ANKI_LINK_ICON = "circle-question-mark";
 
 export default class AnkiLink extends Plugin {
-    settings!: AnkiLinkSettings;
     private statusBarItemEl!: HTMLElement;
     private statusBarRefreshToken = 0;
 
     async onload() {
-        await this.loadSettings();
-
         this.addRibbonIcon(ANKI_LINK_ICON, "Sync Anki cards", async (_evt: MouseEvent) => {
             await this.runSyncAndNotify();
         });
@@ -60,21 +56,7 @@ export default class AnkiLink extends Plugin {
                 void this.refreshStatusBar();
             }),
         );
-
-        this.addSettingTab(new AnkiLinkSettingsTab(this.app, this));
     }
-
-    async loadSettings() {
-        this.settings = {
-            ...DEFAULT_SETTINGS,
-            ...((await this.loadData()) as Partial<AnkiLinkSettings>),
-        };
-    }
-
-    async saveSettings() {
-        await this.saveData(this.settings);
-    }
-
     private insertFlashcard(editor: Editor) {
         const template = "> [!flashcard] ";
         editor.replaceSelection(template);
