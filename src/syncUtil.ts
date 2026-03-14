@@ -426,7 +426,7 @@ async function parseDocument(lines: string[], deckName: string): Promise<ParsedN
  * @param lines
  */
 async function mdLines2HtmlBlock(lines: string[]): Promise<string> {
-    const multiLineStr = lines.join('\n');
+    const multiLineStr = lines.join("\n");
     return marked.parse(multiLineStr);
 }
 
